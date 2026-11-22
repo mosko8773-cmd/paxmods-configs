@@ -1,0 +1,46 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAX MODS</title><style>
+:root{--g:#00ff88;--bg:#050806;--bg2:#0b120e;--line:#12301f;--txt:#d6ffe9;--red:#ff4d6d}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#0b1f14 0,var(--bg) 60%) fixed;color:var(--txt);font-family:ui-monospace,Menlo,Consolas,monospace;min-height:100vh}
+h1,h2{color:var(--g);text-shadow:0 0 12px var(--g);letter-spacing:2px;margin:0 0 12px}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:20px;margin:16px auto;box-shadow:0 0 25px #00ff8814,inset 0 0 20px #00ff8806}
+input,select{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--g);padding:11px;border-radius:8px;font:inherit;outline:none}
+input:focus{border-color:var(--g);box-shadow:0 0 10px #00ff8866}
+button{background:transparent;color:var(--g);border:1px solid var(--g);padding:10px 16px;border-radius:8px;font:inherit;cursor:pointer;box-shadow:0 0 10px #00ff8844;transition:.2s}
+button:hover{background:var(--g);color:var(--bg);box-shadow:0 0 22px var(--g)}button.red{color:var(--red);border-color:var(--red);box-shadow:0 0 10px #ff4d6d44}button.red:hover{background:var(--red);color:#000}
+pre{background:var(--bg);border:1px solid var(--line);padding:12px;border-radius:8px;overflow:auto;max-height:340px;color:var(--g);font-size:12px}
+.ok{color:var(--g);text-shadow:0 0 8px var(--g)}.bad{color:var(--red);text-shadow:0 0 8px var(--red)}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.row>*{flex:1 1 auto}.row button{flex:0 0 auto}
+.wrap{max-width:520px;margin:0 auto;padding:40px 16px}.logo{text-align:center;font-size:34px}#res{display:none}
+</style></head><body><div class="wrap">
+<div class="card"><h1 class="logo">PAX MODS</h1><p style="text-align:center;opacity:.7;margin-top:0">Enter your key to get your Happ subscription</p>
+<div class="row"><input id="k" placeholder="PXMS-XXXX-XXXX-XXXX" autocomplete="off"><button onclick="login()">LOGIN</button></div><p id="err" class="bad"></p></div>
+<div class="card" id="res"><h2>Subscription</h2><p>Status: <b id="st"></b></p><p style="word-break:break-all;font-size:12px" id="lnk"></p>
+<div class="row"><button onclick="copyL()">COPY</button><button onclick="addSub()">ADD SUBSCRIPTION</button></div></div></div>
+<script>
+const DB="https://pax-mods-default-rtdb.firebaseio.com";
+const CONFIG_BASE=location.protocol.startsWith("http")?new URL("configs/",location.href).href:"https://YOUR_USER.github.io/YOUR_REPO/configs/"; // auto: same site as this page
+const CRYPT_API="https://crypto.happ.su/api-v2.php"; // Happ encrypt endpoint (change if yours differs)
+const DEF={remarks:"MOSKO Clientv3 Fixed 🥶",auth:"2292878901",address:"proxy-eu.dripwire.cc",port:443,serverName:"proxy-eu.dripwire.cc",tcpPorts:"39000-39999",udpPorts:"10000-10999"};
+const ts=v=>{if(v==null||v==="")return null;if(typeof v==="number")return v<1e12?v*1000:v;const n=Number(v);if(!isNaN(n))return ts(n);const d=Date.parse(v);return isNaN(d)?null:d};
+function isExpired(k){if(typeof k!=="object"||k===null){if(k===false)return true;const e=typeof k==="string"?ts(k):null;return e!==null&&e<Date.now()}
+if(k.banned===true||k.active===false||k.disabled===true)return true;
+if(["expired","banned","disabled","inactive"].includes(String(k.status||"").toLowerCase()))return true;
+const e=ts(k.expiresAt??k.expiry??k.endDate);return e!==null&&e<Date.now()}
+const inb=(port,p,tag)=>({listen:"127.0.0.1",port,protocol:p,settings:{auth:"noauth",udp:true},sniffing:{destOverride:["http","tls","quic"],enabled:true,routeOnly:false},tag});
+const activeCfg=o=>{const p={...DEF,...(o||{})};return{remarks:p.remarks,inbounds:[inb(10808,"socks","socks"),inb(10809,"http","http")],
+outbounds:[{protocol:"hysteria",settings:{address:p.address,port:+p.port,version:2},streamSettings:{hysteriaSettings:{auth:String(p.auth),version:2},network:"hysteria",security:"tls",tlsSettings:{alpn:["h3"],serverName:p.serverName,show:false},finalmask:{quicParams:{disableChromeParrot:true}}},tag:"proxy"},{protocol:"freedom",tag:"direct"}],
+routing:{domainStrategy:"AsIs",rules:[{network:"tcp",outboundTag:"proxy",port:String(p.tcpPorts)},{network:"udp",outboundTag:"proxy",port:String(p.udpPorts)},{network:"tcp,udp",outboundTag:"direct"}]}}};
+const expiredCfg=()=>({remarks:"Key expired",outbounds:[{protocol:"hysteria",settings:{address:"0.0.0.0",port:1,version:2},streamSettings:{hysteriaSettings:{auth:"error",version:2},network:"hysteria",security:"tls",tlsSettings:{alpn:["h3"],serverName:"0.0.0.0"}},tag:"proxy"},{protocol:"freedom",tag:"direct"}],routing:{rules:[{network:"tcp,udp",outboundTag:"direct"}]}});
+const api=(path,method="GET",body)=>fetch(`${DB}/${path}.json`,{method,body:body===undefined?undefined:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error("Firebase "+r.status);return r.json()});
+let link="",plain="";
+async function encrypt(url){try{const r=await fetch(CRYPT_API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})});
+const t=(await r.text()).trim().replace(/^"|"$/g,"");const m=t.match(/happ:\/\/\S+/);if(m)return m[0].replace(/\\\//g,"/")}catch(e){}return "happ://add/"+url}
+async function login(){const key=k.value.trim().toUpperCase(),e=document.getElementById("err");e.textContent="";res.style.display="none";
+if(!/^[A-Z0-9_-]+$/.test(key)){e.textContent="Invalid key format";return}
+try{const v=await api("keys/"+key);if(v===null){e.textContent="Key not found";return}
+const ex=isExpired(v);st.textContent=ex?"Key expired":"Active";st.className=ex?"bad":"ok";
+plain=CONFIG_BASE+key+".json";link=await encrypt(plain);lnk.textContent=link;res.style.display="block"}
+catch(x){e.textContent="Connection error"}}
+function copyL(){navigator.clipboard.writeText(link).then(()=>alert("Copied!"))}
+function addSub(){location.href=link}
+k.addEventListener("keydown",e=>e.key==="Enter"&&login());
+</script></body></html>

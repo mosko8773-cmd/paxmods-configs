@@ -1,0 +1,66 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PAX MODS Control Panel</title><style>
+:root{--g:#00ff88;--bg:#050806;--bg2:#0b120e;--line:#12301f;--txt:#d6ffe9;--red:#ff4d6d}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#0b1f14 0,var(--bg) 60%) fixed;color:var(--txt);font-family:ui-monospace,Menlo,Consolas,monospace;min-height:100vh}
+h1,h2{color:var(--g);text-shadow:0 0 12px var(--g);letter-spacing:2px;margin:0 0 12px}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:20px;margin:16px auto;box-shadow:0 0 25px #00ff8814,inset 0 0 20px #00ff8806}
+input,select{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--g);padding:11px;border-radius:8px;font:inherit;outline:none}
+input:focus{border-color:var(--g);box-shadow:0 0 10px #00ff8866}
+button{background:transparent;color:var(--g);border:1px solid var(--g);padding:10px 16px;border-radius:8px;font:inherit;cursor:pointer;box-shadow:0 0 10px #00ff8844;transition:.2s}
+button:hover{background:var(--g);color:var(--bg);box-shadow:0 0 22px var(--g)}button.red{color:var(--red);border-color:var(--red);box-shadow:0 0 10px #ff4d6d44}button.red:hover{background:var(--red);color:#000}
+pre{background:var(--bg);border:1px solid var(--line);padding:12px;border-radius:8px;overflow:auto;max-height:340px;color:var(--g);font-size:12px}
+.ok{color:var(--g);text-shadow:0 0 8px var(--g)}.bad{color:var(--red);text-shadow:0 0 8px var(--red)}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.row>*{flex:1 1 auto}.row button{flex:0 0 auto}
+.wrap{max-width:1000px;margin:0 auto;padding:20px 14px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:9px;border-bottom:1px solid var(--line);text-align:left}th{color:var(--g)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}label{font-size:11px;opacity:.7;display:block;margin-bottom:4px}td button{padding:5px 9px;font-size:12px;margin:2px}
+#modal{display:none;position:fixed;inset:0;background:#000d;padding:20px;overflow:auto}#lock{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:9}
+</style></head><body>
+<div id="lock"><div class="card" style="width:340px"><h1>PAX MODS</h1><input id="pw" type="password" placeholder="Admin passcode"><br><br><button onclick="unlock()">ENTER</button></div></div>
+<div class="wrap"><h1>⚡ PAX MODS CONTROL PANEL</h1>
+<div class="card"><h2>Active Subscription Settings</h2><div class="grid" id="form"></div><br>
+<div class="row"><button onclick="apply()">APPLY TO ACTIVE KEYS ONLY</button><span id="msg"></span></div>
+<small style="opacity:.6">Saved to /settings/active and /keyConfigs/{KEY} for active keys only. Expired keys always get the Expired config.</small></div>
+<div class="card"><h2>Keys</h2><div class="row" style="margin-bottom:12px"><input id="nk" placeholder="New key (blank = auto)"><input id="nd" type="number" value="30" title="days"><button onclick="addKey()">ADD KEY</button><button onclick="zipAll()">DOWNLOAD ALL (.zip)</button><button onclick="load()">REFRESH</button></div>
+<div style="overflow-x:auto"><table><thead><tr><th>Key</th><th>Status</th><th>Expires</th><th>Actions</th></tr></thead><tbody id="tb"></tbody></table></div></div></div>
+<div id="modal" onclick="if(event.target===this)this.style.display='none'"><div class="card" style="max-width:700px"><h2 id="mt"></h2><pre id="mp"></pre><button onclick="modal.style.display='none'">CLOSE</button></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script><script>
+const ADMIN_PASS="change-me"; // client-side gate only; also lock your Firebase rules (see README)
+const DB="https://pax-mods-default-rtdb.firebaseio.com";
+const CONFIG_BASE="https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/configs/"; // where configs/ is hosted
+const CRYPT_API="https://crypto.happ.su/api-v2.php"; // Happ encrypt endpoint (change if yours differs)
+const DEF={remarks:"MOSKO Clientv3 Fixed 🥶",auth:"2292878901",address:"proxy-eu.dripwire.cc",port:443,serverName:"proxy-eu.dripwire.cc",tcpPorts:"39000-39999",udpPorts:"10000-10999"};
+const ts=v=>{if(v==null||v==="")return null;if(typeof v==="number")return v<1e12?v*1000:v;const n=Number(v);if(!isNaN(n))return ts(n);const d=Date.parse(v);return isNaN(d)?null:d};
+function isExpired(k){if(typeof k!=="object"||k===null){if(k===false)return true;const e=typeof k==="string"?ts(k):null;return e!==null&&e<Date.now()}
+if(k.banned===true||k.active===false||k.disabled===true)return true;
+if(["expired","banned","disabled","inactive"].includes(String(k.status||"").toLowerCase()))return true;
+const e=ts(k.expiresAt??k.expiry??k.endDate);return e!==null&&e<Date.now()}
+const inb=(port,p,tag)=>({listen:"127.0.0.1",port,protocol:p,settings:{auth:"noauth",udp:true},sniffing:{destOverride:["http","tls","quic"],enabled:true,routeOnly:false},tag});
+const activeCfg=o=>{const p={...DEF,...(o||{})};return{remarks:p.remarks,inbounds:[inb(10808,"socks","socks"),inb(10809,"http","http")],
+outbounds:[{protocol:"hysteria",settings:{address:p.address,port:+p.port,version:2},streamSettings:{hysteriaSettings:{auth:String(p.auth),version:2},network:"hysteria",security:"tls",tlsSettings:{alpn:["h3"],serverName:p.serverName,show:false},finalmask:{quicParams:{disableChromeParrot:true}}},tag:"proxy"},{protocol:"freedom",tag:"direct"}],
+routing:{domainStrategy:"AsIs",rules:[{network:"tcp",outboundTag:"proxy",port:String(p.tcpPorts)},{network:"udp",outboundTag:"proxy",port:String(p.udpPorts)},{network:"tcp,udp",outboundTag:"direct"}]}}};
+const expiredCfg=()=>({remarks:"Key expired",outbounds:[{protocol:"hysteria",settings:{address:"0.0.0.0",port:1,version:2},streamSettings:{hysteriaSettings:{auth:"error",version:2},network:"hysteria",security:"tls",tlsSettings:{alpn:["h3"],serverName:"0.0.0.0"}},tag:"proxy"},{protocol:"freedom",tag:"direct"}],routing:{rules:[{network:"tcp,udp",outboundTag:"direct"}]}});
+const api=(path,method="GET",body)=>fetch(`${DB}/${path}.json`,{method,body:body===undefined?undefined:JSON.stringify(body)}).then(r=>{if(!r.ok)throw new Error("Firebase "+r.status);return r.json()});
+let keys={},kc={},cur={...DEF};const F=["remarks","auth","address","port","serverName","tcpPorts","udpPorts"];
+function unlock(){if(pw.value===ADMIN_PASS){lock.remove();load()}else pw.value=""}
+pw.addEventListener("keydown",e=>e.key==="Enter"&&unlock());
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const say=(t,bad)=>{msg.textContent=t;msg.className=bad?"bad":"ok"};
+function cfgFor(k){return isExpired(keys[k])?expiredCfg():activeCfg(kc[k]||cur)}
+async function load(){try{keys=await api("keys")||{};kc=await api("keyConfigs")||{};cur={...DEF,...(await api("settings/active")||{})}}catch(e){say(e.message,1)}
+form.innerHTML=F.map(f=>`<div><label>${f}</label><input id="f_${f}" value="${esc(cur[f])}"></div>`).join("");
+tb.innerHTML=Object.keys(keys).map(k=>{const v=keys[k],ex=isExpired(v),e=ts(typeof v==="object"&&v?(v.expiresAt??v.expiry??v.endDate):v);
+return`<tr><td>${esc(k)}</td><td class="${ex?"bad":"ok"}">${ex?"EXPIRED":"ACTIVE"}</td><td>${e?new Date(e).toLocaleString():"—"}</td><td>
+<button onclick="tog('${k}')">${ex?"ACTIVATE":"EXPIRE"}</button><button onclick="prev('${k}')">PREVIEW</button><button onclick="dl('${k}')">DOWNLOAD</button><button class="red" onclick="del('${k}')">DELETE</button></td></tr>`}).join("")||`<tr><td colspan=4>No keys</td></tr>`}
+async function apply(){const p={};F.forEach(f=>p[f]=document.getElementById("f_"+f).value.trim());p.port=+p.port;
+try{await api("settings/active","PUT",p);let n=0;for(const k in keys)if(!isExpired(keys[k])){await api("keyConfigs/"+k,"PUT",p);n++}
+say(`Applied to ${n} active key(s). Run sync_configs.py to regenerate files.`);load()}catch(e){say(e.message,1)}}
+async function tog(k){const v=keys[k],ex=isExpired(v);const o=typeof v==="object"&&v?{...v}:{};
+if(ex){o.active=true;o.banned=false;o.status="active";if(ts(o.expiresAt??o.expiry??o.endDate)<Date.now())o.expiresAt=Date.now()+30*864e5;delete o.expiry;delete o.endDate;if(!kc[k])await api("keyConfigs/"+k,"PUT",cur)}
+else{o.active=false;o.status="expired"}await api("keys/"+k,"PUT",o);load()}
+async function addKey(){const r=()=>Math.random().toString(36).slice(2,6).toUpperCase();let k=nk.value.trim().toUpperCase()||`PXMS-${r()}-${r()}-${r()}`;
+if(!/^[A-Z0-9_-]+$/.test(k))return alert("Use letters, digits, - or _ only");
+await api("keys/"+k,"PUT",{active:true,status:"active",createdAt:Date.now(),expiresAt:Date.now()+(+nd.value||30)*864e5});await api("keyConfigs/"+k,"PUT",cur);nk.value="";load()}
+async function del(k){if(!confirm("Delete "+k+"?"))return;await api("keys/"+k,"DELETE");await api("keyConfigs/"+k,"DELETE");load()}
+function prev(k){mt.textContent=k+".json";mp.textContent=JSON.stringify(cfgFor(k),null,2);modal.style.display="block"}
+function save(name,blob){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),999)}
+function dl(k){save(k+".json",new Blob([JSON.stringify(cfgFor(k),null,2)],{type:"application/json"}))}
+async function zipAll(){const z=new JSZip();for(const k in keys)z.file(`configs/${k}.json`,JSON.stringify(cfgFor(k),null,2));save("pax-configs.zip",await z.generateAsync({type:"blob"}))}
+</script></body></html>
